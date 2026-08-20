@@ -136,20 +136,29 @@ pub fn run(package_name: &String, kmi: Option<String>, allow_shell: bool) -> Res
     // 12. Execute post-mount stage scripts (blocking)
     init_event::run_stage("post-mount", true);
 
-    // 13. Execute service stage scripts (non-blocking)
-    init_event::run_stage("service", false);
-
-    // 14. Execute boot-completed stage scripts (non-blocking)
-    init_event::run_stage("boot-completed", false);
-
-    // 15. Restart Manager so it gets a fresh ksu fd from the newly loaded kernel module
-    info!("Restarting KernelSU Manager {package_name}...");
+    // The normal late-load path reaches Android after zygote/system_server have already
+    // been created. Zygisk-based frameworks can therefore start their daemons here but
+    // still fail to attach their bridge to the already-running system_server.
+    //
+    // On the OnePlus temporary-root path this is also a bad time to restart the Manager:
+    // an app-context libksud may be killed by Android seccomp while attempting the KSU
+    // reboot-syscall fd handshake. Keep the Manager stopped and launch the existing
+    // KernelSU emulated userspace reboot from this root daemon context instead.
+    // soft_reboot() replays post-fs-data, restarts Android userspace, then runs service
+    // and boot-completed stages against a fresh zygote/system_server.
+    info!("OnePlus late-load compatibility: starting emulated userspace reboot...");
     let _ = Command::new("am")
         .args(["force-stop", package_name])
         .status();
-    let _ = Command::new("am")
-        .args(["start", "-n", &format!("{package_name}/.ui.MainActivity")])
-        .status();
+
+    let child = Command::new(defs::DAEMON_PATH)
+        .arg("soft-reboot")
+        .spawn()
+        .context("Failed to launch post-late-load soft reboot")?;
+    info!(
+        "OnePlus late-load compatibility: soft-reboot worker started, pid={}",
+        child.id()
+    );
 
     Ok(())
 }
