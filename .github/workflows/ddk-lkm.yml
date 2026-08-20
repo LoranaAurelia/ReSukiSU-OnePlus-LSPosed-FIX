@@ -35,13 +35,38 @@ jobs:
     steps:
     - name: Checkout source code
       uses: actions/checkout@v7
+      with:
+        fetch-depth: 0
 
     - name: Build kernelsu.ko
       env:
         EXPECTED_PR_BUILD_SIZE: ${{ inputs.expected_pr_build_size }}
         EXPECTED_PR_BUILD_HASH: ${{ inputs.expected_pr_build_hash }}
       run: |
-        git config --global --add safe.directory /__w/ReSukiSU/ReSukiSU
+        # actions/checkout temporarily changes HOME while configuring Git.  The
+        # DDK job itself runs in a container with HOME=/github/home, so add the
+        # actual fork workspace here instead of relying on the upstream repo's
+        # hard-coded /__w/ReSukiSU/ReSukiSU path.
+        git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+        # Kbuild derives KSU_VERSION and KSU_VERSION_FULL from Git.  Never let a
+        # broken/shallow/untrusted checkout silently fall back to 30700 and
+        # v4.1.0-unknown-dirty again.
+        GIT_COUNT=$(git -C "$GITHUB_WORKSPACE" rev-list --count HEAD)
+        GIT_SHA=$(git -C "$GITHUB_WORKSPACE" rev-parse --short=8 HEAD)
+        if [ -z "$GIT_COUNT" ] || [ "$GIT_COUNT" -le 1 ] || [ -z "$GIT_SHA" ]; then
+          echo "ERROR: invalid Git metadata: count='$GIT_COUNT' sha='$GIT_SHA'"
+          exit 1
+        fi
+        EXPECTED_KSU_VERSION=$((30700 + GIT_COUNT))
+        if [ "$EXPECTED_KSU_VERSION" -le 30700 ]; then
+          echo "ERROR: invalid derived KSU version: $EXPECTED_KSU_VERSION"
+          exit 1
+        fi
+        echo "Git history count: $GIT_COUNT"
+        echo "Git SHA: $GIT_SHA"
+        echo "Expected ReSukiSU version code: $EXPECTED_KSU_VERSION"
+
         cd kernel
 
         echo "=== Building kernelsu.ko for KMI: ${{ inputs.kmi }} ==="
@@ -87,6 +112,14 @@ jobs:
         EXPECTED_PR_BUILD_SIZE: ${{ inputs.expected_pr_build_size }}
         EXPECTED_PR_BUILD_HASH: ${{ inputs.expected_pr_build_hash }}
       run: |
+        git config --global --add safe.directory "$GITHUB_WORKSPACE"
+        GIT_COUNT=$(git -C "$GITHUB_WORKSPACE" rev-list --count HEAD)
+        GIT_SHA=$(git -C "$GITHUB_WORKSPACE" rev-parse --short=8 HEAD)
+        if [ -z "$GIT_COUNT" ] || [ "$GIT_COUNT" -le 1 ] || [ -z "$GIT_SHA" ]; then
+          echo "ERROR: invalid Git metadata before x64 build: count='$GIT_COUNT' sha='$GIT_SHA'"
+          exit 1
+        fi
+
         cd kernel
         make clean
 
