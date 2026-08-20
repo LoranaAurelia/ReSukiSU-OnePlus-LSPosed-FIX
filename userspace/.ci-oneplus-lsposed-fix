@@ -1,1 +1,2 @@
 Trigger Build Manager after enabling GitHub Actions for the OnePlus/GhostLock late-load compatibility build.
+Retrigger after clippy ptr_arg cleanup on main.
